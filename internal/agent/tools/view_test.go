@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/permission"
 	"github.com/charmbracelet/crush/internal/pubsub"
@@ -113,7 +114,7 @@ func TestViewToolAllowsSmallSectionsOfLargeFiles(t *testing.T) {
 
 	workingDir := t.TempDir()
 	filePath := filepath.Join(workingDir, "large.txt")
-	lines := []string{strings.Repeat("a", MaxViewSize+1), "target line", "after target"}
+	lines := []string{strings.Repeat("a", 204800+1), "target line", "after target"}
 	require.NoError(t, os.WriteFile(filePath, []byte(strings.Join(lines, "\n")), 0o644))
 
 	tool := newViewToolForTest(workingDir)
@@ -159,7 +160,7 @@ func TestViewToolBlocksOversizedImages(t *testing.T) {
 
 	workingDir := t.TempDir()
 	filePath := filepath.Join(workingDir, "large.png")
-	require.NoError(t, os.WriteFile(filePath, []byte(strings.Repeat("a", MaxViewSize+1)), 0o644))
+	require.NoError(t, os.WriteFile(filePath, []byte(strings.Repeat("a", 204800+1)), 0o644))
 
 	tool := newViewToolForTest(workingDir)
 	ctx := context.WithValue(context.Background(), SessionIDContextKey, "test-session")
@@ -250,7 +251,7 @@ func (m mockFileTracker) ListReadFiles(ctx context.Context, sessionID string) ([
 
 func newViewToolForTest(workingDir string) fantasy.AgentTool {
 	permissions := &mockViewPermissionService{Broker: pubsub.NewBroker[permission.PermissionRequest]()}
-	return NewViewTool(nil, permissions, mockFileTracker{}, nil, workingDir)
+	return NewViewTool(nil, permissions, mockFileTracker{}, nil, workingDir, config.ToolView{})
 }
 
 func runViewTool(t *testing.T, tool fantasy.AgentTool, ctx context.Context, params ViewParams) fantasy.ToolResponse {

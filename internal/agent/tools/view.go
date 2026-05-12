@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/fantasy"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/lsp"
@@ -40,7 +41,7 @@ type viewDescriptionData struct {
 func viewDescription() string {
 	return renderTemplate(viewDescriptionTpl, viewDescriptionData{
 		DefaultReadLimit: DefaultReadLimit,
-		MaxViewSizeKB:    MaxViewSize / 1024,
+		MaxViewSizeKB:    204800 / 1024,
 	})
 }
 
@@ -73,8 +74,7 @@ type ViewResponseMetadata struct {
 
 const (
 	ViewToolName     = "view"
-	MaxViewSize      = 200 * 1024 // 200KB
-	DefaultReadLimit = 200
+	DefaultReadLimit = 2000
 	MaxLineLength    = 2000
 )
 
@@ -93,6 +93,7 @@ func NewViewTool(
 	filetracker filetracker.Service,
 	skillTracker *skills.Tracker,
 	workingDir string,
+	viewConfig config.ToolView,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -191,6 +192,14 @@ func NewViewTool(
 				return fantasy.NewTextErrorResponse(fmt.Sprintf("Path is a directory, not a file: %s", filePath)), nil
 			}
 
+			// Hard cap on file size. We allow reading slices of large files
+			// (using offset/limit), but not unreasonably huge files.
+			maxFileSize := viewConfig.GetMaxFileSize()
+			if !isSkillFile && fileInfo.Size() > int64(maxFileSize) {
+				return fantasy.NewTextErrorResponse(fmt.Sprintf("File is too large (%d bytes). Maximum file size is %d bytes",
+					fileInfo.Size(), maxFileSize)), nil
+			}
+
 			// Set default limit if not provided (no limit for SKILL.md files)
 			if params.Limit <= 0 {
 				if isSkillFile {
@@ -200,11 +209,13 @@ func NewViewTool(
 				}
 			}
 
+			maxViewSize := viewConfig.GetMaxViewSize()
+
 			isSupportedImage, mimeType := getImageMimeType(filePath)
 			if isSupportedImage {
-				if fileInfo.Size() > MaxViewSize {
+				if fileInfo.Size() > int64(maxViewSize) {
 					return fantasy.NewTextErrorResponse(fmt.Sprintf("Image file is too large (%d bytes). Maximum size is %d bytes",
-						fileInfo.Size(), MaxViewSize)), nil
+						fileInfo.Size(), maxViewSize)), nil
 				}
 				if !GetSupportsImagesFromContext(ctx) {
 					modelName := GetModelNameFromContext(ctx)
@@ -228,7 +239,7 @@ func NewViewTool(
 			}
 
 			// Read the file content
-			maxContentSize := MaxViewSize
+			maxContentSize := maxViewSize
 			if isSkillFile {
 				maxContentSize = 0
 			}
@@ -243,6 +254,18 @@ func NewViewTool(
 			}
 			if !utf8.ValidString(content) {
 				return fantasy.NewTextErrorResponse("File content is not valid UTF-8"), nil
+			}
+
+			// Check output size and truncate if needed.
+			if !isSkillFile && len(content) > maxViewSize {
+				// Back up to the last complete rune boundary to avoid
+				// splitting a multi-byte UTF-8 character.
+				end := maxViewSize
+				for end > 0 && !utf8.RuneStart(content[end]) {
+					end--
+				}
+				content = content[:end]
+				hasMore = true
 			}
 
 			openInLSPs(ctx, lspManager, filePath)

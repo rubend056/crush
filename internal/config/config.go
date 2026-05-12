@@ -564,6 +564,7 @@ type Tools struct {
 	Ls   ToolLs   `json:"ls,omitzero"`
 	Grep ToolGrep `json:"grep,omitzero"`
 	Glob ToolGlob `json:"glob,omitzero"`
+	View ToolView `json:"view,omitzero"`
 }
 
 type ToolLs struct {
@@ -574,6 +575,21 @@ type ToolLs struct {
 // Limits returns the user-defined max-depth and max-items, or their defaults.
 func (t ToolLs) Limits() (depth, items int) {
 	return ptrValOr(t.MaxDepth, 0), ptrValOr(t.MaxItems, 0)
+}
+
+type ToolView struct {
+	MaxFileSize *int `json:"max_file_size,omitempty" jsonschema:"description=Maximum file size in bytes that the view tool will open,default=204800,example=409600"`
+	MaxViewSize *int `json:"max_view_size,omitempty" jsonschema:"description=Maximum output size in bytes that the view tool will return,default=204800,example=102400"`
+}
+
+// GetMaxFileSize returns the maximum file size in bytes (default 2MB).
+func (t ToolView) GetMaxFileSize() int {
+	return ptrValOr(t.MaxFileSize, 2048000)
+}
+
+// GetMaxViewSize returns the maximum output size in bytes (default 200KB).
+func (t ToolView) GetMaxViewSize() int {
+	return ptrValOr(t.MaxViewSize, 204800)
 }
 
 type ToolGrep struct {
