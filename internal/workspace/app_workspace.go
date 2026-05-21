@@ -101,6 +101,10 @@ func (w *AppWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Messa
 	return w.app.Messages.ListAllUserMessages(ctx)
 }
 
+func (w *AppWorkspace) RecoverIncompleteMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
+	return w.app.Messages.RecoverIncompleteMessages(ctx, sessionID)
+}
+
 // -- Agent --
 
 func (w *AppWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {

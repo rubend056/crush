@@ -202,6 +202,12 @@ func (w *ClientWorkspace) ListAllUserMessages(ctx context.Context) ([]message.Me
 	return protoToMessages(msgs), nil
 }
 
+func (w *ClientWorkspace) RecoverIncompleteMessages(ctx context.Context, sessionID string) ([]message.Message, error) {
+	// In client mode, recovery is handled by the server. Return an empty
+	// list since we don't have direct DB access.
+	return nil, nil
+}
+
 // -- Agent --
 
 func (w *ClientWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {

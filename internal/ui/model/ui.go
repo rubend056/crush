@@ -714,7 +714,18 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		cmds = append(cmds, m.startLSPs(msg.lspFilePaths()))
-		msgs, err := m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		// Recover any assistant messages that were interrupted (e.g.
+		// process crash) and left without a Finish part. This returns
+		// the full message list with recovered messages updated.
+		// Skip recovery if the agent is currently working on this
+		// session — the message may simply be in progress.
+		var msgs []message.Message
+		var err error
+		if !m.com.Workspace.AgentIsSessionBusy(m.session.ID) {
+			msgs, err = m.com.Workspace.RecoverIncompleteMessages(context.Background(), m.session.ID)
+		} else {
+			msgs, err = m.com.Workspace.ListMessages(context.Background(), m.session.ID)
+		}
 		if err != nil {
 			cmds = append(cmds, util.ReportError(err))
 			break
@@ -1564,7 +1575,10 @@ func (m *UI) handleClickFocus(msg tea.MouseClickMsg) (cmd tea.Cmd) {
 // message too.
 func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 	var cmds []tea.Cmd
+	var items []chat.MessageItem
 	existingItem := m.chat.MessageItem(msg.ID)
+	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
+	isEndTurn := msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn
 
 	if existingItem != nil {
 		if assistantItem, ok := existingItem.(*chat.AssistantMessageItem); ok {
@@ -1576,10 +1590,13 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+	} else if shouldRenderAssistant && msg.Role == message.Assistant {
+		// If the assistant message should be rendered but no item exists
+		// (e.g. error arrived before the UI processed the creation event),
+		// create one now.
+		newItem := chat.NewAssistantMessageItem(m.com.Styles, &msg)
+		items = append(items, newItem)
 	}
-
-	shouldRenderAssistant := chat.ShouldRenderAssistantMessage(&msg)
-	isEndTurn := msg.FinishPart() != nil && msg.FinishPart().Reason == message.FinishReasonEndTurn
 	// If the message of the assistant does not have any response just tool
 	// calls we need to remove it, but keep the info item for end-of-turn
 	// renders so the footer (model/provider/duration) remains visible when,
@@ -1600,7 +1617,6 @@ func (m *UI) updateSessionMessage(msg message.Message) tea.Cmd {
 		}
 	}
 
-	var items []chat.MessageItem
 	for _, tc := range msg.ToolCalls() {
 		existingToolItem := m.chat.MessageItem(tc.ID)
 		if toolItem, ok := existingToolItem.(chat.ToolMessageItem); ok {

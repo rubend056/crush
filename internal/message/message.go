@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -65,6 +66,8 @@ type Service interface {
 	// message known to the service. Intended for shutdown and
 	// session-switch paths.
 	FlushAll(ctx context.Context) error
+
+	RecoverIncompleteMessages(ctx context.Context, sessionID string) ([]Message, error)
 }
 
 // pendingState holds the in-memory coalescing buffer for a single
@@ -463,6 +466,29 @@ func (s *service) List(ctx context.Context, sessionID string) ([]Message, error)
 		messages[i], err = s.fromDBItem(dbMessage)
 		if err != nil {
 			return nil, err
+		}
+	}
+	return messages, nil
+}
+
+// RecoverIncompleteMessages finds any assistant messages in the session that
+// were interrupted (e.g. process crash, network failure) and left without a
+// Finish part, and marks them as errored. This ensures the UI can display
+// what happened instead of spinning forever. It returns the full list of
+// messages for the session, with any incomplete messages now marked as
+// finished.
+func (s *service) RecoverIncompleteMessages(ctx context.Context, sessionID string) ([]Message, error) {
+	messages, err := s.List(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	for i, msg := range messages {
+		if msg.Role != Assistant || msg.IsFinished() {
+			continue
+		}
+		messages[i].AddFinish(FinishReasonError, "Request dropped", "The request was interrupted before it could complete. This can happen if the process crashed or the connection was lost.")
+		if updateErr := s.Update(ctx, messages[i]); updateErr != nil {
+			slog.Error("Failed to mark incomplete message as errored", "id", msg.ID, "error", updateErr)
 		}
 	}
 	return messages, nil
