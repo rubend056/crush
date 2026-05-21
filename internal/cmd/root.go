@@ -768,16 +768,13 @@ func startDetachedServer(cmd *cobra.Command, hostURL *url.URL) error {
 }
 
 func shouldEnableMetrics(cfg *config.Config) bool {
-	if v, _ := strconv.ParseBool(os.Getenv("CRUSH_DISABLE_METRICS")); v {
-		return false
+	if cfg.Options.EnableMetrics {
+		return true
 	}
-	if v, _ := strconv.ParseBool(os.Getenv("DO_NOT_TRACK")); v {
-		return false
+	if v, _ := strconv.ParseBool(os.Getenv("CRUSH_ENABLE_METRICS")); v {
+		return true
 	}
-	if cfg.Options.DisableMetrics {
-		return false
-	}
-	return true
+	return false
 }
 
 func MaybePrependStdin(prompt string) (string, error) {

@@ -755,3 +755,61 @@ func TestParseStdoutClaudeCodeFormat(t *testing.T) {
 		require.Equal(t, "hello", r.Context)
 	})
 }
+
+func TestIsSensitiveEnvVar(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		envName  string
+		expected bool
+	}{
+		{"api key", "OPENAI_API_KEY", true},
+		{"secret key", "AWS_SECRET_ACCESS_KEY", true},
+		{"token", "GITHUB_TOKEN", true},
+		{"password", "DB_PASSWORD", true},
+		{"bearer token", "AWS_BEARER_TOKEN_BEDROCK", true},
+		{"credential", "MY_CREDENTIAL", true},
+		{"auth", "SOME_AUTH", true},
+		{"access key", "AWS_ACCESS_KEY_ID", true},
+		{"private key", "SSH_PRIVATE_KEY", true},
+		{"safe var", "HOME", false},
+		{"safe var path", "PATH", false},
+		{"safe var crush", "CRUSH_SESSION_ID", false},
+		{"safe var term", "TERM", false},
+		{"safe var editor", "EDITOR", false},
+		{"crush prefix api key", "CRUSH_OPENAI_API_KEY", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.expected, isSensitiveEnvVar(tt.envName))
+		})
+	}
+}
+
+func TestBuildEnvStripsSecrets(t *testing.T) {
+	// Cannot use t.Parallel() because t.Setenv is used.
+	t.Setenv("TEST_API_KEY", "super-secret-key")
+	t.Setenv("TEST_TOKEN", "secret-token")
+	t.Setenv("SAFE_VAR", "not-secret")
+
+	env := BuildEnv("PreToolUse", "bash", "s1", "/tmp", "/tmp", `{"command":"ls"}`)
+
+	var hasAPIKey, hasToken, hasSafeVar bool
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "TEST_API_KEY="):
+			hasAPIKey = true
+		case strings.HasPrefix(e, "TEST_TOKEN="):
+			hasToken = true
+		case strings.HasPrefix(e, "SAFE_VAR="):
+			hasSafeVar = true
+		}
+	}
+
+	require.False(t, hasAPIKey, "sensitive env vars (API_KEY) should be stripped from hook env")
+	require.False(t, hasToken, "sensitive env vars (TOKEN) should be stripped from hook env")
+	require.True(t, hasSafeVar, "non-sensitive env vars should be preserved")
+}

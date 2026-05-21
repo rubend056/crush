@@ -84,6 +84,20 @@ func Load(workingDir, dataDir string, debug bool) (*ConfigStore, error) {
 		return nil, fmt.Errorf("invalid hook configuration: %w", err)
 	}
 
+	// Warn about hooks loaded from project-level config files. Hooks can
+	// execute arbitrary shell commands and receive tool input data, so
+	// hooks defined in a cloned repo are a supply-chain risk.
+	if len(cfg.Hooks) > 0 {
+		for _, path := range loadedPaths {
+			if isProjectConfigPath(path) {
+				slog.Warn("Hooks are defined in a project-level config file; these can execute arbitrary commands and may come from untrusted sources",
+					"path", path,
+				)
+				break
+			}
+		}
+	}
+
 	if !isInsideWorktree() {
 		const depth = 2
 		const items = 100
@@ -1030,6 +1044,18 @@ func migrateDisableNotifications() {
 			slog.Warn("Failed to write migrated config", "path", path, "error", err)
 		}
 	}
+}
+
+// isProjectConfigPath reports whether the config file path is a project-level
+// config (i.e. not a global/user-level one). Project-level configs live
+// inside the working directory tree and may come from untrusted sources like
+// cloned repos.
+func isProjectConfigPath(path string) bool {
+	globalPaths := map[string]bool{
+		GlobalConfig():     true,
+		GlobalConfigData(): true,
+	}
+	return !globalPaths[path]
 }
 
 // GlobalConfig returns the global configuration file path for the application.

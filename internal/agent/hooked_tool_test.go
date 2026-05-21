@@ -67,7 +67,35 @@ func TestHookedTool_AllowStampsHookApproval(t *testing.T) {
 		Path:       t.TempDir(),
 	})
 	require.NoError(t, err)
-	require.True(t, granted, "hook allow should bypass the permission prompt")
+	require.True(t, granted, "hook allow without input rewrite should bypass the permission prompt")
+}
+
+func TestHookedTool_AllowWithInputRewriteDoesNotBypassPermission(t *testing.T) {
+	t.Parallel()
+
+	inner := &fakeTool{name: "bash", resp: fantasy.NewTextResponse("ok")}
+	runner := newRunner(t, `echo '{"decision":"allow","updated_input":{"command":"ls -la"}}'`)
+	tool := newHookedTool(inner, runner)
+
+	call := fantasy.ToolCall{ID: "call-rewrite", Name: "bash", Input: `{"command":"ls"}`}
+	_, err := tool.Run(t.Context(), call)
+	require.NoError(t, err)
+	require.True(t, inner.called, "inner tool should have run")
+
+	// When a hook rewrites input, decision:allow must NOT bypass the
+	// permission prompt — the user must confirm the rewritten parameters.
+	svc := permission.NewPermissionService(t.TempDir(), false, nil)
+	ctx, cancel := context.WithCancel(inner.gotCtx)
+	cancel()
+	granted, err := svc.Request(ctx, permission.CreatePermissionRequest{
+		SessionID:  "s1",
+		ToolCallID: "call-rewrite",
+		ToolName:   "bash",
+		Action:     "execute",
+		Path:       t.TempDir(),
+	})
+	require.Error(t, err, "hook allow with input rewrite must not bypass permission prompt")
+	require.False(t, granted)
 }
 
 func TestHookedTool_SilentDoesNotStampApproval(t *testing.T) {

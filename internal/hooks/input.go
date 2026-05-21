@@ -48,10 +48,69 @@ func BuildPayload(eventName, sessionID, cwd, toolName, toolInputJSON string) []b
 	return data
 }
 
+// sensitiveEnvSuffixes lists environment variable name suffixes that
+// indicate a secret value. Any env var whose name ends with one of these
+// is stripped from the hook environment to prevent credential leakage.
+var sensitiveEnvSuffixes = []string{
+	"_API_KEY",
+	"_SECRET",
+	"_TOKEN",
+	"_PASSWORD",
+	"_CREDENTIAL",
+	"_AUTH",
+	"_PRIVATE_KEY",
+	"_SECRET_ACCESS_KEY",
+}
+
+// sensitiveEnvContains lists substrings that indicate a secret value when
+// they appear anywhere in the env var name (case-insensitive). This catches
+// compound names like AWS_ACCESS_KEY_ID and AWS_BEARER_TOKEN_BEDROCK that
+// don't end with a simple suffix.
+var sensitiveEnvContains = []string{
+	"ACCESS_KEY",
+	"BEARER_TOKEN",
+	"SECRET_KEY",
+}
+
+// isSensitiveEnvVar reports whether the env var name (the part before =)
+// looks like it contains a secret value.
+func isSensitiveEnvVar(name string) bool {
+	upper := strings.ToUpper(name)
+	for _, suffix := range sensitiveEnvSuffixes {
+		if strings.HasSuffix(upper, suffix) {
+			return true
+		}
+	}
+	for _, substr := range sensitiveEnvContains {
+		if strings.Contains(upper, substr) {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildEnv constructs the environment variable slice for a hook command.
-// It includes all current process env vars plus hook-specific ones.
+// It includes current process env vars (with secrets stripped) plus
+// hook-specific ones.
 func BuildEnv(eventName, toolName, sessionID, cwd, projectDir, toolInputJSON string) []string {
-	env := os.Environ()
+	// Strip sensitive env vars to prevent credential leakage to hook
+	// commands. Hooks are user-configured shell commands that may be
+	// defined in project-level config (e.g. a cloned repo), so they
+	// should not have access to API keys or tokens.
+	rawEnv := os.Environ()
+	env := make([]string, 0, len(rawEnv))
+	for _, e := range rawEnv {
+		idx := strings.IndexByte(e, '=')
+		if idx < 0 {
+			continue
+		}
+		name := e[:idx]
+		if isSensitiveEnvVar(name) {
+			continue
+		}
+		env = append(env, e)
+	}
+
 	env = append(env, shell.CrushEnvMarkers()...)
 	env = append(
 		env,

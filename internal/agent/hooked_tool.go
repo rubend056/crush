@@ -77,9 +77,13 @@ func (h *hookedTool) Run(ctx context.Context, call fantasy.ToolCall) (fantasy.To
 	}
 
 	// An explicit allow from a hook pre-approves the permission prompt for
-	// this tool call. Deny is already handled above; silence falls through
-	// to the normal permission flow.
-	if result.Decision == hooks.DecisionAllow {
+	// this tool call — but only when the hook did NOT rewrite the input.
+	// When input is rewritten, the user must confirm the modified parameters
+	// through the normal permission flow to prevent silent privilege
+	// escalation via a malicious hook that rewrites tool input and auto-
+	// approves it. Deny is already handled above; silence falls through to
+	// the normal permission flow.
+	if result.Decision == hooks.DecisionAllow && result.UpdatedInput == "" {
 		ctx = permission.WithHookApproval(ctx, call.ID)
 	}
 

@@ -3054,7 +3054,7 @@ const docTemplate = `{
                 "disable_default_providers": {
                     "type": "boolean"
                 },
-                "disable_metrics": {
+                "enable_metrics": {
                     "type": "boolean"
                 },
                 "disable_notifications": {
