@@ -1194,7 +1194,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 			if !ok {
 				existing = []SessionAgentCall{}
 			}
-			call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
+			if !strings.HasPrefix(call.Prompt, "The previous session was interrupted") {
+				call.Prompt = fmt.Sprintf("The previous session was interrupted because it got too long, the initial user request was: `%s`", call.Prompt)
+			}
 			existing = append(existing, call)
 			a.messageQueue.Set(call.SessionID, existing)
 		}
