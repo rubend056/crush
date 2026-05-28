@@ -46,7 +46,35 @@ func NewJobOutputTool() fantasy.AgentTool {
 			}
 
 			if params.Wait {
-				bgShell.WaitContext(ctx)
+				waitCtx, waitCancel := context.WithTimeout(ctx, shell.WaitTimeout)
+				completed := bgShell.WaitContext(waitCtx)
+				waitCancel()
+				if !completed {
+					// Timed out waiting — return whatever output we have so far.
+					stdout, stderr, done, err := bgShell.GetOutput()
+					_ = err
+					_ = done
+					var outputParts []string
+					if stdout != "" {
+						outputParts = append(outputParts, stdout)
+					}
+					if stderr != "" {
+						outputParts = append(outputParts, stderr)
+					}
+					output := strings.Join(outputParts, "\n")
+					if output == "" {
+						output = BashNoOutput
+					}
+					metadata := JobOutputResponseMetadata{
+						ShellID:          params.ShellID,
+						Command:          bgShell.Command,
+						Description:      bgShell.Description,
+						Done:             false,
+						WorkingDirectory: bgShell.WorkingDir,
+					}
+					result := fmt.Sprintf("Status: still running (timed out waiting after %s)\n\n%s", shell.WaitTimeout, output)
+					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(result), metadata), nil
+				}
 			}
 
 			stdout, stderr, done, err := bgShell.GetOutput()
