@@ -105,6 +105,31 @@ func (w *AppWorkspace) RecoverIncompleteMessages(ctx context.Context, sessionID 
 	return w.app.Messages.RecoverIncompleteMessages(ctx, sessionID)
 }
 
+func (w *AppWorkspace) DeleteMessagesAfter(ctx context.Context, sessionID, messageID string) error {
+	msgs, err := w.app.Messages.List(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to list messages: %w", err)
+	}
+	// Find the index of the target message.
+	found := false
+	for i, msg := range msgs {
+		if msg.ID == messageID {
+			// Delete all messages after this one.
+			for j := i + 1; j < len(msgs); j++ {
+				if err := w.app.Messages.Delete(ctx, msgs[j].ID); err != nil {
+					return fmt.Errorf("failed to delete message %s: %w", msgs[j].ID, err)
+				}
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("message %s not found in session %s", messageID, sessionID)
+	}
+	return nil
+}
+
 // -- Agent --
 
 func (w *AppWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {

@@ -301,6 +301,11 @@ func (a *AssistantInfoItem) ID() string {
 	return a.id
 }
 
+// MessageID returns the underlying message ID for this assistant info item.
+func (a *AssistantInfoItem) MessageID() string {
+	return a.message.ID
+}
+
 // RawRender implements MessageItem.
 func (a *AssistantInfoItem) RawRender(width int) string {
 	innerWidth := max(0, width-MessageLeftPaddingTotal)

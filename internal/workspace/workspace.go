@@ -97,6 +97,7 @@ type Workspace interface {
 	ListUserMessages(ctx context.Context, sessionID string) ([]message.Message, error)
 	ListAllUserMessages(ctx context.Context) ([]message.Message, error)
 	RecoverIncompleteMessages(ctx context.Context, sessionID string) ([]message.Message, error)
+	DeleteMessagesAfter(ctx context.Context, sessionID, messageID string) error
 
 	// Agent
 	AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error

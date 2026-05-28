@@ -2604,6 +2604,20 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				}
 			case key.Matches(msg, m.keyMap.Chat.Expand):
 				m.chat.ToggleExpandedSelectedItem()
+			case key.Matches(msg, m.keyMap.Chat.CutAfter):
+				if m.hasSession() && !m.isAgentBusy() {
+					msgID := m.chat.SelectedMessageID()
+					if msgID != "" {
+						lastIdx := m.chat.LastItemIndexForMessage(msgID)
+						if err := m.com.Workspace.DeleteMessagesAfter(context.Background(), m.session.ID, msgID); err != nil {
+							cmds = append(cmds, util.ReportError(err))
+						} else {
+							m.chat.RemoveItemsAfter(lastIdx)
+							m.chat.SetSelected(lastIdx)
+							cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("Cut messages after selected")))
+						}
+					}
+				}
 			case key.Matches(msg, m.keyMap.Chat.Up):
 				if cmd := m.chat.ScrollByAndAnimate(-1); cmd != nil {
 					cmds = append(cmds, cmd)
@@ -2993,6 +3007,7 @@ func (m *UI) ShortHelp() []key.Binding {
 				binds,
 				k.Chat.UpDown,
 				k.Chat.UpDownOneItem,
+				k.Chat.CutAfter,
 				k.Chat.PageUp,
 				k.Chat.PageDown,
 				k.Chat.Copy,
@@ -3135,6 +3150,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 				[]key.Binding{
 					k.Chat.Copy,
 					k.Chat.ClearHighlight,
+					k.Chat.CutAfter,
 				},
 			)
 			if m.pillsExpanded && hasIncompleteTodos(m.session.Todos) && m.promptQueue > 0 {

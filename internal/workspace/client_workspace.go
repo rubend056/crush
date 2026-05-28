@@ -208,6 +208,11 @@ func (w *ClientWorkspace) RecoverIncompleteMessages(ctx context.Context, session
 	return nil, nil
 }
 
+func (w *ClientWorkspace) DeleteMessagesAfter(ctx context.Context, sessionID, messageID string) error {
+	// TODO: implement server-side endpoint for client mode.
+	return fmt.Errorf("DeleteMessagesAfter is not supported in client mode")
+}
+
 // -- Agent --
 
 func (w *ClientWorkspace) AgentRun(ctx context.Context, sessionID, prompt string, attachments ...message.Attachment) error {

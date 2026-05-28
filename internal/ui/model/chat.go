@@ -630,6 +630,11 @@ func (m *Chat) ScrollToSelectedAndAnimate() tea.Cmd {
 	return tea.Batch(m.ScrollToSelected(), m.RestartPausedVisibleAnimations())
 }
 
+// SelectedIndex returns the index of the currently selected item.
+func (m *Chat) SelectedIndex() int {
+	return m.list.Selected()
+}
+
 // SelectedItemInView returns whether the selected item is currently in view.
 func (m *Chat) SelectedItemInView() bool {
 	return m.list.SelectedItemInView()
@@ -785,7 +790,93 @@ func (m *Chat) RemoveMessage(id string) {
 	delete(m.pausedAnimations, id)
 }
 
-// MessageItem returns the message item with the given ID, or nil if not found.
+// RemoveItemsAfter removes all list items after the given index and rebuilds
+// the ID map. The item at the given index is kept.
+func (m *Chat) RemoveItemsAfter(idx int) {
+	if idx < 0 || idx >= m.list.Len() {
+		return
+	}
+
+	// Remove IDs of items being removed from the maps.
+	for i := idx + 1; i < m.list.Len(); i++ {
+		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
+			delete(m.idInxMap, item.ID())
+			delete(m.pausedAnimations, item.ID())
+		}
+	}
+
+	// Truncate the list by keeping only items 0..idx.
+	items := make([]list.Item, 0, idx+1)
+	for i := range idx + 1 {
+		items = append(items, m.list.ItemAt(i))
+	}
+	m.list.SetItems(items...)
+
+	// Rebuild the entire index map since indices shifted.
+	m.idInxMap = make(map[string]int)
+	for i := range m.list.Len() {
+		if item, ok := m.list.ItemAt(i).(chat.MessageItem); ok {
+			m.idInxMap[item.ID()] = i
+		}
+	}
+}
+
+// SelectedMessageID returns the DB message ID of the currently selected item.
+// For tool items, it returns the parent message ID. For user/assistant items,
+// it returns the item's ID (which is the message ID). For assistant info
+// items, it extracts the message ID from the composite ID.
+func (m *Chat) SelectedMessageID() string {
+	item := m.list.SelectedItem()
+	if item == nil {
+		return ""
+	}
+	// Tool items have a MessageID() method that returns the parent message ID.
+	if toolItem, ok := item.(chat.ToolMessageItem); ok {
+		return toolItem.MessageID()
+	}
+	// AssistantInfoItem IDs are "messageID:assistant-info".
+	if infoItem, ok := item.(*chat.AssistantInfoItem); ok {
+		return infoItem.MessageID()
+	}
+	// User and Assistant items use the message ID as their ID.
+	if msgItem, ok := item.(chat.MessageItem); ok {
+		return msgItem.ID()
+	}
+	return ""
+}
+
+// LastItemIndexForMessage returns the index of the last list item that belongs
+// to the given message ID. A single message can span multiple list items
+// (assistant text, tool calls, info footer). This finds the highest index
+// among all of them.
+func (m *Chat) LastItemIndexForMessage(messageID string) int {
+	lastIdx := -1
+	for i := range m.list.Len() {
+		item := m.list.ItemAt(i)
+		if msgItem, ok := item.(chat.MessageItem); ok {
+			if msgItem.ID() == messageID {
+				if i > lastIdx {
+					lastIdx = i
+				}
+			}
+		}
+		if toolItem, ok := item.(chat.ToolMessageItem); ok {
+			if toolItem.MessageID() == messageID {
+				if i > lastIdx {
+					lastIdx = i
+				}
+			}
+		}
+		if infoItem, ok := item.(*chat.AssistantInfoItem); ok {
+			if infoItem.MessageID() == messageID {
+				if i > lastIdx {
+					lastIdx = i
+				}
+			}
+		}
+	}
+	return lastIdx
+}
 func (m *Chat) MessageItem(id string) chat.MessageItem {
 	idx, ok := m.idInxMap[id]
 	if !ok {

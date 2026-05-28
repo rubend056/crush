@@ -50,6 +50,7 @@ type KeyMap struct {
 		ScrollRight    key.Binding
 		FocusSidebar   key.Binding
 		FocusChat      key.Binding
+		CutAfter       key.Binding
 	}
 
 	Initialize struct {
@@ -194,7 +195,7 @@ func DefaultKeyMap() KeyMap {
 		key.WithHelp("↓", "down"),
 	)
 	km.Chat.Up = key.NewBinding(
-		key.WithKeys("up", "ctrl+k", "k"),
+		key.WithKeys("up", "k"),
 		key.WithHelp("↑", "up"),
 	)
 	km.Chat.UpDown = key.NewBinding(
@@ -264,6 +265,10 @@ func DefaultKeyMap() KeyMap {
 	km.Chat.FocusChat = key.NewBinding(
 		key.WithKeys("h", "left"),
 		key.WithHelp("h/←", "focus chat"),
+	)
+	km.Chat.CutAfter = key.NewBinding(
+		key.WithKeys("ctrl+k"),
+		key.WithHelp("ctrl+k", "cut after"),
 	)
 	km.Initialize.Yes = key.NewBinding(
 		key.WithKeys("y", "Y"),
