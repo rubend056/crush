@@ -1327,9 +1327,42 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return ErrSessionBusy
 	}
 
-	// Copy mutable fields under lock to avoid races with SetModels.
+	// Copy mutable fields under lock to avoid races with SetModels/SetTools.
+	//
+	// Summarization uses the SAME coder system prompt and tool definitions
+	// as Run() to preserve prompt caching. Without this, swapping in a
+	// dedicated summary system prompt would invalidate the cached prefix
+	// and force the provider to reprocess the entire (potentially huge)
+	// conversation history at full input-token cost. With this approach,
+	// only the trailing summary instruction is uncached.
+	//
+	// The summary instructions are passed via the Prompt field (which
+	// fantasy appends as a transient user message) so they never get
+	// persisted to the DB or rendered in the UI. ToolChoice=none keeps the
+	// cached tool definitions in the request while preventing the model
+	// from calling tools instead of producing a text summary.
 	largeModel := a.largeModel.Get()
+	agentTools := a.tools.Copy()
+	systemPrompt := a.systemPrompt.Get()
 	systemPromptPrefix := a.systemPromptPrefix.Get()
+
+	var mcpInstructions strings.Builder
+	for _, server := range mcp.GetStates() {
+		if server.State != mcp.StateConnected {
+			continue
+		}
+		if s := server.Client.InitializeResult().Instructions; s != "" {
+			mcpInstructions.WriteString(s)
+			mcpInstructions.WriteString("\n\n")
+		}
+	}
+	if s := mcpInstructions.String(); s != "" {
+		systemPrompt += "\n\n<mcp-instructions>\n" + s + "\n</mcp-instructions>"
+	}
+
+	if len(agentTools) > 0 {
+		agentTools[len(agentTools)-1].SetProviderOptions(a.getCacheControlOptions())
+	}
 
 	currentSession, err := a.sessions.Get(ctx, sessionID)
 	if err != nil {
@@ -1357,9 +1390,9 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		}
 	}()
 
-	agent := fantasy.NewAgent(
-		largeModel.Model,
-		fantasy.WithSystemPrompt(string(summaryPrompt)),
+	agent := fantasy.NewAgent(largeModel.Model,
+		fantasy.WithSystemPrompt(systemPrompt),
+		fantasy.WithTools(agentTools...),
 		fantasy.WithUserAgent(userAgent),
 	)
 	summaryMessage, err := a.messages.Create(ctx, sessionID, message.CreateMessageParams{
@@ -1372,13 +1405,25 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		return err
 	}
 
-	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
+	// The summary instructions are appended as a transient user message by
+	// fantasy via the Prompt field. The summary.md template (originally a
+	// system prompt) is embedded here as user content so the cached coder
+	// system prompt and tool definitions can be reused.
+	summaryPromptText := string(summaryPrompt)
+	if extra := buildSummaryPrompt(currentSession.Todos); extra != "" {
+		summaryPromptText += "\n\n" + extra
+	}
 
+	noTools := fantasy.ToolChoiceNone
 	resp, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
 		Prompt:          summaryPromptText,
 		Messages:        aiMsgs,
 		Headers:         sessionHeaders(sessionID),
 		ProviderOptions: opts,
+		// Force a text response — the cached tool definitions stay in the
+		// request (preserving the cache) but the model is constrained to
+		// produce the summary instead of calling tools.
+		ToolChoice: &noTools,
 		PrepareStep: func(callContext context.Context, options fantasy.PrepareStepFunctionOptions) (_ context.Context, prepared fantasy.PrepareStepResult, err error) {
 			prepared.Messages = options.Messages
 			if systemPromptPrefix != "" {
@@ -1684,6 +1729,9 @@ func (a *sessionAgent) getSessionMessages(ctx context.Context, session session.S
 		}
 		if summaryMsgIndex != -1 {
 			msgs = msgs[summaryMsgIndex:]
+			// Rewrite the summary as a User message so the next Run() sees a
+			// clean conversation start — the LLM treats it as a user briefing
+			// rather than an orphaned Assistant message with no prior context.
 			msgs[0].Role = message.User
 		}
 	}
@@ -2220,17 +2268,20 @@ func (a *sessionAgent) workaroundProviderMediaLimitations(messages []fantasy.Mes
 }
 
 // buildSummaryPrompt constructs the prompt text for session summarization.
+// The opening summarization instruction lives in summary.md; this function
+// only appends per-session context (current todos) that the model should
+// preserve in the summary.
 func buildSummaryPrompt(todos []session.Todo) string {
-	var sb strings.Builder
-	sb.WriteString("Provide a detailed summary of our conversation above.")
-	if len(todos) > 0 {
-		sb.WriteString("\n\n## Current Todo List\n\n")
-		for _, t := range todos {
-			fmt.Fprintf(&sb, "- [%s] %s\n", t.Status, t.Content)
-		}
-		sb.WriteString("\nInclude these tasks and their statuses in your summary. ")
-		sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")
+	if len(todos) == 0 {
+		return ""
 	}
+	var sb strings.Builder
+	sb.WriteString("## Current Todo List\n\n")
+	for _, t := range todos {
+		fmt.Fprintf(&sb, "- [%s] %s\n", t.Status, t.Content)
+	}
+	sb.WriteString("\nInclude these tasks and their statuses in your summary. ")
+	sb.WriteString("Instruct the resuming assistant to use the `todos` tool to continue tracking progress on these tasks.")
 	return sb.String()
 }
 

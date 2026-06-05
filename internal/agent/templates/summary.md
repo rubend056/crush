@@ -1,4 +1,4 @@
-You are summarizing a conversation to preserve context for continuing work later.
+Summarize our conversation above to preserve context for continuing work later.
 
 **Critical**: This summary will be the ONLY context available when the conversation resumes. Assume all previous messages will be lost. Be thorough.
 
@@ -37,11 +37,7 @@ You are summarizing a conversation to preserve context for continuing work later
 
 ## Exact Next Steps
 
-Be specific. Don't write "implement authentication" - write:
-
-1. Add JWT middleware to src/middleware/auth.js:15
-2. Update login handler in src/routes/user.js:45 to return token
-3. Test with: npm test -- auth.test.js
+Be specific with file paths, line numbers, and exact commands. For example: "Add JWT middleware to src/middleware/auth.js:15" — not "implement authentication".
 
 **Tone**: Write as if briefing a teammate taking over mid-task. Include everything they'd need to continue without asking questions. No emojis ever.
 
