@@ -28,15 +28,53 @@ func (c *coordinator) agentTool(ctx context.Context) (fantasy.AgentTool, error) 
 	if !ok {
 		return nil, errors.New("task agent not configured")
 	}
-	prompt, err := taskPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
+	taskPrompt, err := taskPrompt(prompt.WithWorkingDir(c.cfg.WorkingDir()))
 	if err != nil {
 		return nil, err
 	}
 
-	agent, err := c.buildAgent(ctx, prompt, agentCfg, true)
+	// Use the small model for both large and small — the agent tool
+	// doesn't need the large model.
+	_, small, err := c.buildAgentModels(ctx, true)
 	if err != nil {
 		return nil, err
 	}
+
+	smallProviderCfg, ok := c.cfg.Config().Providers.Get(small.ModelCfg.Provider)
+	if !ok {
+		return nil, errSmallModelProviderNotConfigured
+	}
+
+	agent := NewSessionAgent(SessionAgentOptions{
+		LargeModel:           small, // Use small model for both.
+		SmallModel:           small,
+		SystemPromptPrefix:   smallProviderCfg.SystemPromptPrefix,
+		IsSubAgent:           true,
+		DisableAutoSummarize: c.cfg.Config().Options.DisableAutoSummarize,
+		IsYolo:               c.permissions.SkipRequests(),
+		Sessions:             c.sessions,
+		Messages:             c.messages,
+		Tools:                nil,
+		Notify:               c.notify,
+	})
+
+	c.readyWg.Go(func() error {
+		systemPrompt, err := taskPrompt.Build(ctx, small.Model.Provider(), small.Model.Model(), c.cfg)
+		if err != nil {
+			return err
+		}
+		agent.SetSystemPrompt(systemPrompt)
+		return nil
+	})
+
+	c.readyWg.Go(func() error {
+		tools, err := c.buildTools(ctx, agentCfg, true)
+		if err != nil {
+			return err
+		}
+		agent.SetTools(tools)
+		return nil
+	})
 	return fantasy.NewParallelAgentTool(
 		AgentToolName,
 		agentToolDescription,
