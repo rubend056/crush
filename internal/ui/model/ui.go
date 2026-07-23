@@ -1109,12 +1109,16 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Otherwise handle mouse wheel for chat. Use the coalesced delta
 		// directly as the line count. Terminals like Ghostty send DeltaY=3
 		// per physical wheel tick (matching their native scrollback), while
-		// others send DeltaY=1.
+		// others send DeltaY=1. Apply the user-configured scroll multiplier.
+		scrollMultiplier := 1
+		if cfg := m.com.Config(); cfg.Options.TUI != nil {
+			scrollMultiplier = cfg.Options.TUI.GetScrollMultiplier()
+		}
 		switch m.state {
 		case uiChat:
 			// When sidebar is focused, route wheel events to sidebar scrolling.
 			if m.focus == uiFocusSidebar {
-				lines := int(msg.DeltaY)
+				lines := int(msg.DeltaY) * scrollMultiplier
 				if lines != 0 {
 					m.sidebarOffset = max(0, min(m.sidebarOffset+lines, m.sidebarMaxOffsetVal))
 					m.sidebarScrollbarSeq++
@@ -1124,9 +1128,9 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			if msg.DeltaX != 0 {
-				m.chat.ScrollSelectedShellHorizontal(int(msg.DeltaX))
+				m.chat.ScrollSelectedShellHorizontal(int(msg.DeltaX) * scrollMultiplier)
 			}
-			lines := int(msg.DeltaY)
+			lines := int(msg.DeltaY) * scrollMultiplier
 			if lines == 0 {
 				break
 			}

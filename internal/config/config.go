@@ -253,8 +253,14 @@ type TUIOptions struct {
 	//
 
 	Completions Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
-	Transparent *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
-	Scrollbar   string      `json:"scrollbar,omitempty" jsonschema:"description=Chat scrollbar visibility,enum=default,enum=always,enum=never,default=default"`
+	Transparent     *bool  `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	Scrollbar       string `json:"scrollbar,omitempty" jsonschema:"description=Chat scrollbar visibility,enum=default,enum=always,enum=never,default=default"`
+	ScrollMultiplier *int   `json:"scroll_multiplier,omitempty" jsonschema:"description=Multiplier for mouse wheel scroll speed,default=1,example=3"`
+}
+
+// GetScrollMultiplier returns the scroll multiplier (default 1).
+func (t TUIOptions) GetScrollMultiplier() int {
+	return ptrValOr(t.ScrollMultiplier, 1)
 }
 
 // Completions defines options for the completions UI.
