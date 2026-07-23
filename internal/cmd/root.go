@@ -28,7 +28,6 @@ import (
 	"github.com/charmbracelet/crush/internal/client"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
-	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/lock"
 	crushlog "github.com/charmbracelet/crush/internal/log"
 	"github.com/charmbracelet/crush/internal/projects"
@@ -124,8 +123,6 @@ crush --continue
 			sessionID = sess.ID
 		}
 
-		event.AppInitialized()
-
 		com := common.DefaultCommon(ws)
 		model := ui.New(com, sessionID, continueLast)
 
@@ -140,9 +137,8 @@ crush --continue
 		go ws.Subscribe(program)
 
 		if _, err := program.Run(); err != nil {
-			event.Error(err)
 			slog.Error("TUI run error", "error", err)
-			return errors.New("Crush crashed. If metrics are enabled, we were notified about it. If you'd like to report it, please copy the stacktrace above and open an issue at https://github.com/charmbracelet/crush/issues/new?template=bug.yml") //nolint:staticcheck
+			return errors.New("Crush crashed. Please copy the stacktrace above and open an issue at https://github.com/charmbracelet/crush/issues/new?template=bug.yml")
 		}
 		return nil
 	},
@@ -313,10 +309,6 @@ func setupLocalWorkspace(cmd *cobra.Command) (workspace.Workspace, func(), error
 		return nil, nil, err
 	}
 
-	if shouldEnableMetrics(cfg) {
-		event.Init()
-	}
-
 	ws := workspace.NewAppWorkspace(appInstance, store)
 	cleanup := func() { appInstance.Shutdown() }
 	return ws, cleanup, nil
@@ -403,10 +395,6 @@ func connectToServer(cmd *cobra.Command) (*client.Client, *proto.Workspace, func
 	ws, err := c.CreateWorkspace(ctx, wsReq)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create workspace: %v", err)
-	}
-
-	if shouldEnableMetrics(ws.Config) {
-		event.Init()
 	}
 
 	if ws.Config != nil {
@@ -765,16 +753,6 @@ func startDetachedServer(cmd *cobra.Command, hostURL *url.URL) error {
 	}
 
 	return nil
-}
-
-func shouldEnableMetrics(cfg *config.Config) bool {
-	if cfg.Options.EnableMetrics {
-		return true
-	}
-	if v, _ := strconv.ParseBool(os.Getenv("CRUSH_ENABLE_METRICS")); v {
-		return true
-	}
-	return false
 }
 
 func MaybePrependStdin(prompt string) (string, error) {

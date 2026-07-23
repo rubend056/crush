@@ -24,7 +24,6 @@ import (
 	"github.com/charmbracelet/crush/internal/clipboard"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
-	"github.com/charmbracelet/crush/internal/event"
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/format"
 	"github.com/charmbracelet/crush/internal/herdr"
@@ -40,8 +39,6 @@ import (
 	"github.com/charmbracelet/crush/internal/skills"
 	"github.com/charmbracelet/crush/internal/ui/anim"
 	"github.com/charmbracelet/crush/internal/ui/styles"
-	"github.com/charmbracelet/crush/internal/update"
-	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
 	"github.com/charmbracelet/x/term"
@@ -136,9 +133,6 @@ func New(ctx context.Context, conn *sql.DB, store *config.ConfigStore, skillsMgr
 	if err := clipboard.Init(); err != nil {
 		slog.Warn("Clipboard initialization failed", "error", err)
 	}
-
-	// Check for updates in the background.
-	go app.checkForUpdates(ctx)
 
 	// Arm initialization synchronously before launching it so WaitForInit
 	// blocks for the in-flight init instead of racing the goroutine and
@@ -721,11 +715,6 @@ func (app *App) Shutdown() {
 	// Now run remaining cleanup tasks in parallel.
 	var wg sync.WaitGroup
 
-	// Send exit event
-	wg.Go(func() {
-		event.AppExited()
-	})
-
 	// Kill all background shells.
 	wg.Go(func() {
 		shell.GetBackgroundShellManager().KillAll(shutdownCtx)
@@ -750,20 +739,4 @@ func (app *App) Shutdown() {
 		}
 	}
 	wg.Wait()
-}
-
-// checkForUpdates checks for available updates.
-func (app *App) checkForUpdates(ctx context.Context) {
-	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	info, err := update.Check(checkCtx, version.Version, update.Default)
-	if err != nil || !info.Available() {
-		return
-	}
-	app.events.Publish(pubsub.UpdatedEvent, UpdateAvailableMsg{
-		CurrentVersion: info.Current,
-		LatestVersion:  info.Latest,
-		IsDevelopment:  info.IsDevelopment(),
-	})
 }

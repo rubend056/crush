@@ -252,10 +252,10 @@ type TUIOptions struct {
 	// Here we can add themes later or any TUI related options
 	//
 
-	Completions Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
-	Transparent     *bool  `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
-	Scrollbar       string `json:"scrollbar,omitempty" jsonschema:"description=Chat scrollbar visibility,enum=default,enum=always,enum=never,default=default"`
-	ScrollMultiplier *int   `json:"scroll_multiplier,omitempty" jsonschema:"description=Multiplier for mouse wheel scroll speed,default=1,example=3"`
+	Completions      Completions `json:"completions,omitzero" jsonschema:"description=Completions UI options"`
+	Transparent      *bool       `json:"transparent,omitempty" jsonschema:"description=Enable transparent background for the TUI interface,default=false"`
+	Scrollbar        string      `json:"scrollbar,omitempty" jsonschema:"description=Chat scrollbar visibility,enum=default,enum=always,enum=never,default=default"`
+	ScrollMultiplier *int        `json:"scroll_multiplier,omitempty" jsonschema:"description=Multiplier for mouse wheel scroll speed,default=1,example=3"`
 }
 
 // GetScrollMultiplier returns the scroll multiplier (default 1).
@@ -324,7 +324,6 @@ type Options struct {
 	DisableProviderAutoUpdate bool         `json:"disable_provider_auto_update,omitempty" jsonschema:"description=Disable providers auto-update,default=false"`
 	DisableDefaultProviders   bool         `json:"disable_default_providers,omitempty" jsonschema:"description=Ignore all default/embedded providers. When enabled\\, providers must be fully specified in the config file with base_url\\, models\\, and api_key - no merging with defaults occurs,default=false"`
 	Attribution               *Attribution `json:"attribution,omitempty" jsonschema:"description=Attribution settings for generated content"`
-	EnableMetrics             bool         `json:"enable_metrics,omitempty" jsonschema:"description=Enable sending anonymous usage metrics to Charm,default=false"`
 	InitializeAs              string       `json:"initialize_as,omitempty" jsonschema:"description=Name of the context file to create/update during project initialization,default=AGENTS.md,example=AGENTS.md,example=CRUSH.md,example=CLAUDE.md,example=docs/LLMs.md"`
 	AutoLSP                   *bool        `json:"auto_lsp,omitempty" jsonschema:"description=Automatically setup LSPs based on root markers,default=true"`
 	Progress                  *bool        `json:"progress,omitempty" jsonschema:"description=Show indeterminate progress updates during long operations,default=true"`
