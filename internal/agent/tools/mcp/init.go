@@ -655,14 +655,19 @@ func createSession(ctx context.Context, cfg *config.ConfigStore, name string, m 
 		return nil, err
 	}
 
-	// Wrap the transport so channel notifications can be intercepted. The
-	// gate starts undecided: notifications that arrive during capability
-	// negotiation are buffered. After Connect resolves, the gate is opened
-	// (and the buffer drained) only when the server declares the channel
-	// capability AND was opted in via --channels; otherwise it is closed
-	// (buffer discarded). This prevents early notifications from being lost.
-	channelGate := newChannelGate()
-	transport = &channelTransport{inner: transport, name: name, gate: channelGate}
+	// Wrap the transport so channel notifications can be intercepted, but
+	// only when channel opt-in is active. The channelConn wrapper embeds
+	// mcp.Connection (the interface), which does not include the SDK's
+	// unexported sessionUpdated method. When the wrapper is active, the
+	// SDK's type assertion to clientConnection fails silently, so
+	// initializedResult is never set and the Mcp-Protocol-Version header
+	// is missing on post-discover requests — servers that require it
+	// (e.g. GitHub Copilot MCP) reject those requests with HTTP 400.
+	var channelGate *channelGate
+	if channelOptIn {
+		channelGate = newChannelGate()
+		transport = &channelTransport{inner: transport, name: name, gate: channelGate}
+	}
 
 	client := mcp.NewClient(
 		&mcp.Implementation{
@@ -713,15 +718,18 @@ func createSession(ctx context.Context, cfg *config.ConfigStore, name string, m 
 	// the claude/channel capability and was opted in via --channels.
 	// Otherwise close it (fail closed). Resolving drains buffered messages
 	// that arrived during negotiation so a fast server does not lose early
-	// events.
-	if channelOptIn && hasChannelCapability(session.InitializeResult()) {
-		buffered := channelGate.resolve(true)
-		for _, raw := range buffered {
-			publishChannelMessage(mcpCtx, name, raw)
+	// events. Skipped entirely when channel opt-in is off (no wrapper was
+	// created).
+	if channelGate != nil {
+		if channelOptIn && hasChannelCapability(session.InitializeResult()) {
+			buffered := channelGate.resolve(true)
+			for _, raw := range buffered {
+				publishChannelMessage(mcpCtx, name, raw)
+			}
+			slog.Info("MCP channel enabled", "name", name, "buffered", len(buffered))
+		} else {
+			channelGate.resolve(false)
 		}
-		slog.Info("MCP channel enabled", "name", name, "buffered", len(buffered))
-	} else {
-		channelGate.resolve(false)
 	}
 
 	return &ClientSession{
