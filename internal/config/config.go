@@ -140,6 +140,11 @@ type ProviderConfig struct {
 	// only explicitly listed models are used.
 	AutoDiscoverModels *bool `json:"discover_models,omitempty" jsonschema:"description=Auto-discover models from /v1/models endpoint. When true with existing models they are merged (yours win),default=true"`
 
+	// BypassSecurity disables all bash command restrictions (banned
+	// commands, argument blockers, and safe-command permission prompts)
+	// for agents using this provider. Use with extreme caution.
+	BypassSecurity bool `json:"bypass_security,omitempty" jsonschema:"description=Bypass all bash command restrictions and permission prompts for this provider,default=false"`
+
 	// The provider models
 	Models []catwalk.Model `json:"models,omitempty" jsonschema:"description=List of models available from this provider"`
 }
