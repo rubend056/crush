@@ -671,10 +671,25 @@ func (app *App) Subscribe(program *tea.Program) {
 	})
 	defer app.tuiWG.Done()
 
-	events := app.events.Subscribe(tuiCtx)
+	app.forwardEvents(tuiCtx, program.Send)
+}
+
+// forwardEvents pumps app.events to send. Before forwarding it drains
+// whatever else has already queued up and compacts the backlog: the
+// send target (Bubble Tea's program channel) is unbuffered and every
+// message costs a full Update+render cycle, so when the UI falls
+// behind on a slow frame, streaming update events pile up here and
+// replaying every stale intermediate state would only bury the UI
+// deeper. Message UpdatedEvent payloads are complete snapshots, so
+// keeping just the newest update per message loses nothing.
+//
+// Split out from Subscribe so tests can drive it without a real
+// *tea.Program.
+func (app *App) forwardEvents(ctx context.Context, send func(tea.Msg)) {
+	events := app.events.Subscribe(ctx)
 	for {
 		select {
-		case <-tuiCtx.Done():
+		case <-ctx.Done():
 			slog.Debug("TUI message handler shutting down")
 			return
 		case ev, ok := <-events:
@@ -682,7 +697,14 @@ func (app *App) Subscribe(program *tea.Program) {
 				slog.Debug("TUI message channel closed")
 				return
 			}
-			program.Send(ev.Payload)
+			batch, closed := drainEvents(events, tuiEventDrainMax)
+			batch = append([]pubsub.Event[tea.Msg]{ev}, batch...)
+			for _, e := range compactMessageUpdates(batch) {
+				send(e.Payload)
+			}
+			if closed {
+				return
+			}
 		}
 	}
 }
