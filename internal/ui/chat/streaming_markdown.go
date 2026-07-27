@@ -211,8 +211,9 @@ func trimGlamourMargins(s string) string {
 //     and mis-syntax-highlighting the trailing partial.
 //     2b. Reject if any line in content[:p] (outside fenced blocks)
 //     is a list-marker line, an HTML-block opener, or a link
-//     reference definition. See [prefixHasOpenHazard] for the
-//     reasoning behind these "anywhere in prefix" rejects.
+//     reference definition. See the B1/B2/B3 hazard rules on
+//     [boundaryScan] for the reasoning behind these "anywhere in
+//     prefix" rejects.
 //  3. Reject if the last non-blank line of content[:p] is:
 //     - a list item marker line ("^\s*([-*+]|\d+\.)\s")
 //     - a table line (contains "|")
@@ -227,122 +228,40 @@ func trimGlamourMargins(s string) string {
 //
 // Returns the byte offset of the first character AFTER the blank
 // line, i.e. the start of the trailing segment.
+//
+// The scan is a single O(n) pass ([scanBoundaries]) with an O(1)
+// check per candidate; the naive formulation — re-scanning the
+// prefix for fences and hazards at every blank-line position — is
+// O(n²) on long documents and burned a noticeable share of every
+// streaming flush on long reasoning traces.
 func findSafeMarkdownBoundary(content string) int {
 	if len(content) == 0 {
 		return -1
 	}
-
-	// Iterate every blank-line position from latest to earliest.
-	for p := blankLineBefore(content, len(content)); p > 0; p = blankLineBefore(content, p-1) {
-		if !isSafeBoundaryAt(content, p) {
-			continue
+	s := scanBoundaries(content)
+	for i := len(s.lines) - 1; i >= 1; i-- {
+		if s.safePrefix(i) {
+			return s.starts[i]
 		}
-		return p
 	}
 	return -1
 }
 
-// blankLineBefore returns the byte offset of the first character
-// AFTER the latest blank-line separator that ends strictly before
-// `until`. A blank-line separator is a sequence "\n([ \t]*\n)+"
-// — one newline, then one or more lines containing only spaces or
-// tabs and terminated by another newline. The returned offset is
-// the start of the first non-blank line that follows the
-// separator (or the position immediately after the final newline,
-// if no further content remains).
+// boundaryScan precomputes in a single forward pass everything the
+// per-candidate boundary safety checks need, so both
+// [findSafeMarkdownBoundary] and [findThinkingTailCut] can evaluate
+// candidates in O(1) each.
 //
-// Returns -1 when no blank-line separator exists before `until`.
-func blankLineBefore(content string, until int) int {
-	if until <= 0 {
-		return -1
-	}
-	// Walk backward looking for a newline followed (after optional
-	// blank-line content) by another newline. We track the latest
-	// newline we've seen; if the next earlier newline has only
-	// blank chars between them, we have a blank-line separator
-	// and the boundary sits immediately after the latest newline.
-	end := until
-	for end > 0 {
-		nl := strings.LastIndexByte(content[:end], '\n')
-		if nl < 0 {
-			return -1
-		}
-		// Look for an earlier newline whose gap to nl is empty
-		// or whitespace only.
-		prev := strings.LastIndexByte(content[:nl], '\n')
-		for prev >= 0 {
-			gap := content[prev+1 : nl]
-			if isBlankOrSpaces(gap) {
-				return nl + 1
-			}
-			// Gap had non-whitespace; nl is not a blank-line
-			// separator. Move up: try with the earlier newline as
-			// the new "nl" candidate.
-			break
-		}
-		end = nl
-	}
-	return -1
-}
-
-// isBlankOrSpaces reports whether s consists entirely of spaces
-// and tabs (or is empty).
-func isBlankOrSpaces(s string) bool {
-	for i := range len(s) {
-		if s[i] != ' ' && s[i] != '\t' {
-			return false
-		}
-	}
-	return true
-}
-
-// isSafeBoundaryAt reports whether content[:p] is a safe stable
-// prefix. p must be a blank-line boundary (start of a line, with a
-// blank line immediately preceding).
+// Line i is a boundary CANDIDATE — content[:starts[i]] is a valid
+// place to split — when line i-1 is a blank-line separator that
+// does not itself start at offset 0 (a leading blank line has no
+// preceding newline, so nothing before it can be a prefix). The
+// scan also covers the phantom line that follows a trailing
+// newline, which is a legitimate end-of-document boundary.
 //
-// Beyond the last-line checks, three "anywhere in the prefix"
-// hazards force a reject because they cannot be reliably reasoned
-// about by inspecting the trailing line alone. For each of these
-// the simplest, safest rule was chosen — see prefixHasOpenHazard.
-func isSafeBoundaryAt(content string, p int) bool {
-	prefix := content[:p]
-
-	// (2) Even number of triple-backtick fence lines.
-	if countFenceLines(prefix)%2 != 0 {
-		return false
-	}
-
-	// (2b) Anywhere-in-prefix hazards: open list (B1), HTML block
-	// opener (B2), reference link definition (B3). Any of these
-	// anywhere in the prefix forces a fallback.
-	if prefixHasOpenHazard(prefix) {
-		return false
-	}
-
-	// (3) Inspect the last non-blank line of the prefix.
-	lastLine := lastNonBlankLine(prefix)
-	if lastLine != "" && lineOpensConstruct(lastLine) {
-		return false
-	}
-
-	// (4) If anything follows, make sure it doesn't look like a
-	// setext underline that would retroactively turn the last
-	// paragraph of the prefix into a header.
-	if rest := content[p:]; rest != "" {
-		first := firstNonBlankLine(rest)
-		if isSetextUnderlineCandidate(first) {
-			return false
-		}
-	}
-
-	return true
-}
-
-// prefixHasOpenHazard reports whether prefix contains any of three
-// constructs that cannot be safely cut at a blank-line boundary
-// even when the immediately preceding line looks fine. Each check
-// uses the SIMPLEST viable conservative rule per the F8 round-2
-// review:
+// The anywhere-in-prefix hazard flag folds the three B-rules from
+// the F8 round-2 review, each with its SIMPLEST viable
+// conservative rule:
 //
 //	B1 (loose lists). A loose list has a blank line between an item
 //	   and a continuation paragraph that begins with indentation
@@ -377,69 +296,179 @@ func isSafeBoundaryAt(content string, p int) bool {
 //	   loses the definition because each half is rendered as an
 //	   independent glamour document.
 //
-//	   Rule chosen: any reference link definition line anywhere in
-//	   the prefix forces -1. Suffix-side reference detection is
+//	   Rule chosen: any reference link definition line anywhere
+//	   in the prefix forces -1. Suffix-side reference detection is
 //	   fragile (three syntaxes: [text][label], [label][], [label]),
 //	   so the prefix-side check is the simpler safe choice.
-//
-// All three rules accept the perf hit of "no boundary after a
-// list / HTML block / link def" in exchange for guaranteed
-// soundness. If profiling shows this kills the F8 win on real
-// streaming traces, the next iteration can promote each rule to
-// its less-conservative variant (closure-aware list tracking,
-// per-tag HTML close detection, suffix-aware ref tracking).
-func prefixHasOpenHazard(prefix string) bool {
-	inFence := false
-	for line := range splitLines(prefix) {
-		// Track fenced state so list/html/ref patterns inside a
-		// fenced code block do not falsely trigger the hazards.
-		if isFenceLine(line) {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		trimmed := strings.TrimLeft(line, " \t")
-		if trimmed == "" {
-			continue
-		}
-		// B1: any list-item marker.
-		if isListItemMarker(trimmed) {
-			return true
-		}
-		// B2: HTML block opener.
-		if isHTMLBlockOpener(line) {
-			return true
-		}
-		// B3: link reference definition.
-		if isLinkRefDefinition(line) {
-			return true
-		}
-	}
-	return false
+type boundaryScan struct {
+	lines  []string // Every line of content, without terminators.
+	starts []int    // Byte offset of each line's start.
+	sep    []bool   // Line is blank per isBlankOrSpaces.
+	fence  []bool   // Odd number of fence lines in lines[:i].
+	hazard []bool   // Any B1/B2/B3 hazard in lines[:i].
+	lastNB []int    // Last non-blank (TrimSpace) line in lines[:i], -1 if none.
+	nextNB []int    // First non-blank (TrimSpace) line in lines[i:], -1 if none.
 }
 
-// countFenceLines counts lines that begin a fenced code block in
-// the CommonMark sense: a line whose first non-whitespace run is
-// at least three consecutive backticks (or tildes). Each such
-// line toggles the fenced state, so an even count means every
-// opened fence has been closed.
-//
-// We accept up to three leading spaces of indentation (CommonMark
-// rule) and require the fence characters to be the FIRST
-// non-whitespace content of the line. We deliberately do NOT
-// attempt to parse info-strings or differentiate opener from
-// closer beyond toggling — a closing fence is just any line
-// whose first non-whitespace run is >=3 of the same fence char.
-func countFenceLines(s string) int {
-	n := 0
-	for line := range splitLines(s) {
+// scanBoundaries builds the [boundaryScan] for content in one
+// forward pass plus one backward pass for nextNB.
+func scanBoundaries(content string) *boundaryScan {
+	n := strings.Count(content, "\n") + 1
+	s := &boundaryScan{
+		lines:  make([]string, 0, n),
+		starts: make([]int, 0, n),
+		sep:    make([]bool, 0, n),
+		fence:  make([]bool, 0, n),
+		hazard: make([]bool, 0, n),
+		lastNB: make([]int, 0, n),
+		nextNB: make([]int, 0, n),
+	}
+	inFence := false
+	hazardSeen := false
+	lastNonBlank := -1
+	for start := 0; start <= len(content); {
+		idx := len(s.lines)
+		var line string
+		next := len(content) + 1
+		if nl := strings.IndexByte(content[start:], '\n'); nl >= 0 {
+			line = content[start : start+nl]
+			next = start + nl + 1
+		} else {
+			line = content[start:]
+		}
+		s.lines = append(s.lines, line)
+		s.starts = append(s.starts, start)
+		s.sep = append(s.sep, isBlankOrSpaces(line))
+		s.fence = append(s.fence, inFence)
+		s.hazard = append(s.hazard, hazardSeen)
+		s.lastNB = append(s.lastNB, lastNonBlank)
+
+		// Fence lines toggle state and are never hazards; lines
+		// inside a fence are skipped so list/html/ref patterns in
+		// code do not falsely trigger the hazards.
 		if isFenceLine(line) {
-			n++
+			inFence = !inFence
+		} else if !inFence {
+			if trimmed := strings.TrimLeft(line, " \t"); trimmed != "" &&
+				(isListItemMarker(trimmed) || isHTMLBlockOpener(line) || isLinkRefDefinition(line)) {
+				hazardSeen = true
+			}
+		}
+		if strings.TrimSpace(line) != "" {
+			lastNonBlank = idx
+		}
+		if next > len(content) {
+			break
+		}
+		start = next
+	}
+
+	nextNonBlank := -1
+	s.nextNB = make([]int, len(s.lines))
+	for i := len(s.lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(s.lines[i]) != "" {
+			nextNonBlank = i
+		}
+		s.nextNB[i] = nextNonBlank
+	}
+	return s
+}
+
+// candidate reports whether line i begins at a blank-line boundary.
+func (s *boundaryScan) candidate(i int) bool {
+	return i > 0 && s.sep[i-1] && s.starts[i-1] > 0
+}
+
+// safePrefix reports whether cutting at the start of line i yields
+// a safe stable prefix for the incremental streaming cache: a
+// blank-line boundary with even fence parity, no anywhere-in-prefix
+// hazard, and no construct torn across the cut. This is the
+// single-pass equivalent of the old per-candidate isSafeBoundaryAt.
+func (s *boundaryScan) safePrefix(i int) bool {
+	if !s.candidate(i) || s.fence[i] || s.hazard[i] {
+		return false
+	}
+	return s.cutLocal(i)
+}
+
+// safeTail reports whether rendering content starting at line i
+// alone produces a correct-looking tail of the full render. The
+// anywhere-in-prefix hazards (B1/B2/B3) deliberately do NOT apply:
+// they protect the cached prefix render's glue equivalence, while
+// here the skipped prefix is never rendered at all. The fence
+// parity and cut-local checks DO apply — cutting into an open
+// fence or a construct continuation would visibly mis-render the
+// tail.
+func (s *boundaryScan) safeTail(i int) bool {
+	if !s.candidate(i) || s.fence[i] {
+		return false
+	}
+	if nb := s.nextNB[i]; nb < 0 || s.lines[nb][0] == ' ' || s.lines[nb][0] == '\t' {
+		// Either nothing to render, or the fragment would open on
+		// an indented continuation (e.g. a loose-list paragraph
+		// torn from its item, or an indented code block missing
+		// its lead-in).
+		return false
+	}
+	return s.cutLocal(i)
+}
+
+// cutLocal runs the checks that only depend on the lines adjacent
+// to the cut: the last non-blank line before it must not keep a
+// markdown construct open, and the first non-blank line after it
+// must not be a setext underline that would retroactively promote
+// the prefix's final paragraph to a header.
+func (s *boundaryScan) cutLocal(i int) bool {
+	if nb := s.lastNB[i]; nb >= 0 && lineOpensConstruct(s.lines[nb]) {
+		return false
+	}
+	if nb := s.nextNB[i]; nb >= 0 && isSetextUnderlineCandidate(s.lines[nb]) {
+		return false
+	}
+	return true
+}
+
+// findThinkingTailCut returns a byte offset into content such that
+// rendering only content[cut:] yields a correct-looking tail of the
+// full render. The collapsed thinking view only ever displays the
+// last maxCollapsedThinkingHeight rendered lines, so when the
+// source is long enough it renders just a bounded tail fragment
+// instead of the whole document — streaming a long reasoning trace
+// otherwise pays a full-document glamour render on every debounced
+// flush.
+//
+// The walk goes backward from the end and takes the LATEST safe
+// blank-line boundary whose fragment holds at least minNonBlank
+// non-blank lines, giving up once maxScan lines or maxBytes bytes
+// were scanned. ok=false sends the caller down the full-render
+// path.
+func findThinkingTailCut(content string, minNonBlank, maxScan, maxBytes int) (cut int, ok bool) {
+	s := scanBoundaries(content)
+	nonBlank := 0
+	for i := len(s.lines) - 1; i >= 1; i-- {
+		if strings.TrimSpace(s.lines[i]) != "" {
+			nonBlank++
+		}
+		if scanned := len(s.lines) - i; scanned > maxScan || len(content)-s.starts[i] > maxBytes {
+			return 0, false
+		}
+		if nonBlank < minNonBlank || !s.safeTail(i) {
+			continue
+		}
+		return s.starts[i], true
+	}
+	return 0, false
+}
+
+// isBlankOrSpaces reports whether s consists entirely of spaces
+// and tabs (or is empty).
+func isBlankOrSpaces(s string) bool {
+	for i := range len(s) {
+		if s[i] != ' ' && s[i] != '\t' {
+			return false
 		}
 	}
-	return n
+	return true
 }
 
 // isFenceLine reports whether line opens or closes a fenced code
@@ -463,48 +492,6 @@ func isFenceLine(line string) bool {
 		run++
 	}
 	return run >= 3
-}
-
-// lastNonBlankLine returns the last non-blank line of s, or ""
-// when every line is blank.
-func lastNonBlankLine(s string) string {
-	last := ""
-	for line := range splitLines(s) {
-		if strings.TrimSpace(line) != "" {
-			last = line
-		}
-	}
-	return last
-}
-
-// firstNonBlankLine returns the first non-blank line of s, or ""
-// when every line is blank.
-func firstNonBlankLine(s string) string {
-	for line := range splitLines(s) {
-		if strings.TrimSpace(line) != "" {
-			return line
-		}
-	}
-	return ""
-}
-
-// splitLines yields the lines of s without their terminators. The
-// final segment is yielded even if not newline-terminated.
-func splitLines(s string) func(yield func(string) bool) {
-	return func(yield func(string) bool) {
-		start := 0
-		for i := 0; i < len(s); i++ {
-			if s[i] == '\n' {
-				if !yield(s[start:i]) {
-					return
-				}
-				start = i + 1
-			}
-		}
-		if start <= len(s)-1 {
-			yield(s[start:])
-		}
-	}
 }
 
 // lineOpensConstruct reports whether line keeps a markdown

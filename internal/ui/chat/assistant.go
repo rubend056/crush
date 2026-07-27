@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/crush/internal/message"
 	"github.com/charmbracelet/crush/internal/ui/anim"
@@ -20,6 +21,11 @@ import (
 // truncated in the collapsed state.
 const assistantMessageTruncateFormat = "… (%d lines hidden) [click or space to expand]"
 
+// assistantMessageTruncateUnknownFormat is the collapsed-state
+// truncation hint shown when the thinking source was tail-sliced
+// before rendering, so the full rendered line count is unknown.
+const assistantMessageTruncateUnknownFormat = "… (earlier lines hidden) [click or space to expand]"
+
 // assistantMessageTailWindowFormat is shown above a tail-windowed thinking
 // block to advertise that earlier lines exist and that the user can
 // promote the view to a full expansion. The promotion is wired through
@@ -29,6 +35,19 @@ const assistantMessageTailWindowFormat = "… %d earlier lines hidden [click or 
 
 // maxCollapsedThinkingHeight defines the maximum height of the thinking
 const maxCollapsedThinkingHeight = 10
+
+// Tail-fragment sizing for the collapsed thinking view. While
+// collapsed, only the last maxCollapsedThinkingHeight rendered lines
+// are displayed, so a long thinking source is cut down to a bounded
+// tail fragment before the (expensive) glamour render — see
+// findThinkingTailCut. The fragment must cover at least
+// thinkingTailCutMinNonBlank non-blank source lines so the rendered
+// tail still fills the window after markdown reflow, and the
+// backward scan gives up after thinkingTailCutMaxScanLines lines or
+// thinkingTailCutMaxBytes bytes, falling back to a full render.
+const thinkingTailCutMinNonBlank = 2 * maxCollapsedThinkingHeight
+const thinkingTailCutMaxScanLines = 400
+const thinkingTailCutMaxBytes = 16 << 10
 
 // maxExpandedThinkingTailLines is the F5 tail-window cap. When the user
 // expands a thinking block whose post-glamour line count exceeds this
@@ -456,9 +475,28 @@ func (a *AssistantMessageItem) cachedError(width int) string {
 // boundary problem §4.4 of the design note flags. The bordered
 // ThinkingBox style is applied on top of the (already-windowed)
 // lines so the visual box matches what the user sees today.
+//
+// The collapsed view is the exception: it only ever displays the last
+// maxCollapsedThinkingHeight rendered lines, so when the source is
+// long enough it is cut down to a bounded tail fragment BEFORE the
+// glamour render (findThinkingTailCut picks a boundary that is safe
+// to render from). Streaming a long reasoning trace otherwise pays a
+// full-document glamour render on every debounced flush, which made
+// the UI crawl while thinking grew.
 func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
 	renderer := common.QuietMarkdownRenderer(a.sty, width)
-	rendered := a.streamingThinking.Render(thinking, width, renderer)
+
+	var rendered string
+	sliced := false
+	if a.thinkingViewMode == thinkingCollapsed {
+		if cut, ok := findThinkingTailCut(thinking, thinkingTailCutMinNonBlank, thinkingTailCutMaxScanLines, thinkingTailCutMaxBytes); ok {
+			rendered = renderThinkingFragment(renderer, thinking[cut:])
+			sliced = true
+		}
+	}
+	if !sliced {
+		rendered = a.streamingThinking.Render(thinking, width, renderer)
+	}
 	rendered = strings.TrimSpace(rendered)
 
 	lines := strings.Split(rendered, "\n")
@@ -466,7 +504,16 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 
 	switch a.thinkingViewMode {
 	case thinkingCollapsed:
-		if totalLines > maxCollapsedThinkingHeight {
+		if sliced {
+			// Earlier source lines are hidden by construction; the
+			// full rendered line count is unknown, so the hint
+			// carries no count.
+			hint := a.sty.Messages.ThinkingTruncationHint.Render(assistantMessageTruncateUnknownFormat)
+			if totalLines > maxCollapsedThinkingHeight {
+				lines = lines[totalLines-maxCollapsedThinkingHeight:]
+			}
+			lines = append([]string{hint, ""}, lines...)
+		} else if totalLines > maxCollapsedThinkingHeight {
 			lines = lines[totalLines-maxCollapsedThinkingHeight:]
 			hint := a.sty.Messages.ThinkingTruncationHint.Render(
 				fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
@@ -502,6 +549,21 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	}
 
 	return result
+}
+
+// renderThinkingFragment renders a tail fragment of the thinking
+// source as a standalone glamour document, mirroring the lock and
+// trailing-newline discipline of streamingMarkdown.Render: the
+// renderer is shared per width and not safe for concurrent use.
+func renderThinkingFragment(renderer *glamour.TermRenderer, fragment string) string {
+	mu := common.LockMarkdownRenderer(renderer)
+	mu.Lock()
+	defer mu.Unlock()
+	out, err := renderer.Render(fragment)
+	if err != nil {
+		return fragment
+	}
+	return strings.TrimSuffix(out, "\n")
 }
 
 // renderMarkdown renders content as markdown. F8 routes the call
