@@ -571,6 +571,13 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 			if model.CatwalkCfg.CanReason {
 				extraBody["enable_thinking"] = model.ModelCfg.Think || reasoningEffort != ""
 			}
+
+		default:
+			// Generic openai-compat providers: set enable_thinking
+			// when the model can reason and reasoning is active.
+			if model.CatwalkCfg.CanReason {
+				extraBody["enable_thinking"] = model.ModelCfg.Think || reasoningEffort != "" && reasoningEffort != "none"
+			}
 		}
 
 		mergedOptions["extra_body"] = extraBody
