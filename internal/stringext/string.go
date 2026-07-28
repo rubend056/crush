@@ -3,6 +3,7 @@ package stringext
 import (
 	"encoding/base64"
 	"strings"
+	"unicode"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -14,11 +15,13 @@ func Capitalize(text string) string {
 
 // NormalizeSpace normalizes whitespace in the given content string.
 // It replaces Windows-style line endings with Unix-style line endings,
-// converts tabs to four spaces, and trims leading and trailing whitespace.
+// converts tabs to four spaces, and trims trailing whitespace. Leading
+// whitespace is preserved so that indentation on the first line (e.g.
+// when viewing a slice of a file mid-function) is not lost.
 func NormalizeSpace(content string) string {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\t", "    ")
-	content = strings.TrimSpace(content)
+	content = strings.TrimRightFunc(content, unicode.IsSpace)
 	return content
 }
 
